@@ -356,10 +356,11 @@ erDiagram
 
 **并发协议（基线永久保留）**：
 
-- 协议要求事务隔离级别为 **`READ COMMITTED`**（PostgreSQL 默认）。
-  `app.locks.acquire_baseline_lock()` 会先执行 `SHOW transaction_isolation`
-  校验；在 `REPEATABLE READ` / `SERIALIZABLE` 下直接抛
-  `LockProtocolError`，避免等锁后继续使用旧快照；
+- 协议要求**显式事务**且隔离级别为 **`READ COMMITTED`**（PostgreSQL 默认）。
+  `app.locks.acquire_baseline_lock()` 会检查底层连接的 `autocommit` 与
+  `SHOW transaction_isolation`；`AUTOCOMMIT`、`REPEATABLE READ` /
+  `SERIALIZABLE` 下直接抛 `LockProtocolError`，避免锁语句结束即释放，或等锁后
+  继续使用旧快照；
 - 清理与基线写入共用 PostgreSQL 事务级 advisory lock
   `pg_advisory_xact_lock(830183000001)`（`app/locks.py`）；
 - 清理在**选候选之前**取锁，并把筛选条件再次放进 `DELETE` 语句
@@ -416,7 +417,7 @@ python scripts/cleanup_results.py --now 2026-11-20T12:00:00Z
 
 本次实测结果：
 
-- `96 passed`（真实 PostgreSQL 16.16；本次 1.81s）
+- `97 passed`（真实 PostgreSQL 16.16；本次 1.91s）
 - `alembic upgrade head` → `downgrade base` → `upgrade head` → `alembic check` 全部成功
 - `alembic current`：`0002_tenant_aware_fks (head)`
 

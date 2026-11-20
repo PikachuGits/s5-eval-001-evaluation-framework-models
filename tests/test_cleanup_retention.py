@@ -494,3 +494,19 @@ def test_internal_delete_helper_cannot_bypass_lock(database_url):
         rr_session.rollback()
         rr_session.close()
         rr_engine.dispose()
+
+
+def test_baseline_lock_rejects_autocommit(database_url):
+    """AUTOCOMMIT releases a transaction-scoped advisory lock at statement end."""
+
+    autocommit_engine = create_engine(
+        database_url, isolation_level="AUTOCOMMIT", poolclass=NullPool
+    )
+    session_factory = sessionmaker(bind=autocommit_engine, expire_on_commit=False)
+    autocommit_session = session_factory()
+    try:
+        with pytest.raises(LockProtocolError, match="explicit transaction"):
+            acquire_baseline_lock(autocommit_session)
+    finally:
+        autocommit_session.close()
+        autocommit_engine.dispose()

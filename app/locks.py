@@ -37,7 +37,15 @@ def _require_read_committed(session: Session) -> None:
     fresh snapshot per statement, which is what the protocol relies on.
     """
 
-    isolation = session.execute(text("SHOW transaction_isolation")).scalar()
+    connection = session.connection()
+    raw_connection = getattr(connection.connection, "driver_connection", None)
+    if getattr(raw_connection, "autocommit", False):
+        raise LockProtocolError(
+            "baseline/retention lock requires an explicit transaction; "
+            "AUTOCOMMIT would release pg_advisory_xact_lock immediately"
+        )
+
+    isolation = connection.execute(text("SHOW transaction_isolation")).scalar()
     if isolation != "read committed":
         raise LockProtocolError(
             "baseline/retention lock requires READ COMMITTED, "
