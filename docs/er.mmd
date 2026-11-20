@@ -1,0 +1,76 @@
+erDiagram
+    eval_suite ||--o{ eval_case : "contains"
+    eval_suite ||--o{ eval_run : "executes"
+    eval_suite ||--o{ eval_baseline : "pins"
+
+    eval_run ||--o{ eval_result : "produces"
+    eval_case ||--o{ eval_result : "judged in"
+    eval_run ||--o{ eval_baseline : "referenced by"
+
+    eval_suite {
+        uuid id PK
+        uuid org_id
+        uuid site_id
+        varchar suite_key
+        varchar tool
+        int version
+        int case_count
+        varchar status
+    }
+
+    eval_case {
+        uuid id PK
+        uuid suite_id FK
+        varchar case_key
+        jsonb input
+        jsonb context
+        jsonb expected_points
+        jsonb forbidden_points
+        text reference_output
+        text_array tags
+        varchar difficulty
+        numeric weight
+        varchar review_state
+    }
+
+    eval_run {
+        uuid id PK
+        uuid suite_id FK
+        int suite_version
+        varchar target_tool
+        varchar target_prompt_version
+        varchar target_model
+        varchar trigger
+        varchar git_sha
+        varchar status
+        numeric pass_rate
+        numeric score_avg
+        bigint token_usage
+        timestamptz started_at
+        timestamptz finished_at
+    }
+
+    eval_result {
+        uuid id PK
+        uuid run_id FK
+        uuid case_id FK
+        uuid suite_id FK
+        text output_text
+        jsonb output_json
+        numeric score
+        boolean passed
+        jsonb point_hits
+        jsonb violations
+        int latency_ms
+        jsonb judge_trace
+        text error
+    }
+
+    eval_baseline {
+        uuid id PK
+        uuid suite_id FK
+        uuid run_id FK
+        uuid set_by
+        timestamptz set_at
+        text note
+    }
