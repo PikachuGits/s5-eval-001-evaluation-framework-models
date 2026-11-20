@@ -10,23 +10,29 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.baseline import BaselineError, set_baseline
-from app.locks import BASELINE_LOCK_KEY, acquire_baseline_lock
+from app.locks import (
+    BASELINE_LOCK_KEY,
+    LockProtocolError,
+    acquire_baseline_lock,
+)
 from app.models.eval_result import EvalResult
 from app.models.eval_run import EvalRun
 from app.retention import (
     RETENTION_DAYS,
+    _delete_candidates,
     _policy_filter,
     cleanup_old_results,
     count_cleanup_candidates,
-    delete_candidates,
 )
 from tests.factories import (
     ORG_ID,
@@ -332,7 +338,6 @@ def test_cli_script_uses_frozen_time_and_deletes(session, database_url):
     )
 
 
-
 def test_delete_recheck_skips_run_pinned_after_candidate_select(session):
     """The original race: SELECT candidates, then insert a baseline, then DELETE."""
 
@@ -358,7 +363,7 @@ def test_delete_recheck_skips_run_pinned_after_candidate_select(session):
     session.add(make_baseline(suite, run))
     session.commit()
 
-    deleted = delete_candidates(session, list(candidate_ids), CUTOFF)
+    deleted = _delete_candidates(session, list(candidate_ids), CUTOFF)
     session.commit()
 
     assert deleted == 0
@@ -455,3 +460,37 @@ def test_set_baseline_protects_results_from_cleanup(session):
 
     assert report.deleted == 0
     assert session.get(EvalResult, result.id) is not None
+
+
+def test_baseline_lock_rejects_repeatable_read(database_url):
+    """A REPEATABLE READ snapshot would be taken before the lock wait."""
+
+    rr_engine = create_engine(
+        database_url, isolation_level="REPEATABLE READ", poolclass=NullPool
+    )
+    session_factory = sessionmaker(bind=rr_engine, expire_on_commit=False)
+    rr_session = session_factory()
+    try:
+        with pytest.raises(LockProtocolError, match="READ COMMITTED"):
+            acquire_baseline_lock(rr_session)
+    finally:
+        rr_session.rollback()
+        rr_session.close()
+        rr_engine.dispose()
+
+
+def test_internal_delete_helper_cannot_bypass_lock(database_url):
+    """The helper is self-locking even when called outside cleanup_old_results."""
+
+    rr_engine = create_engine(
+        database_url, isolation_level="REPEATABLE READ", poolclass=NullPool
+    )
+    session_factory = sessionmaker(bind=rr_engine, expire_on_commit=False)
+    rr_session = session_factory()
+    try:
+        with pytest.raises(LockProtocolError, match="READ COMMITTED"):
+            _delete_candidates(rr_session, [uuid.uuid4()], CUTOFF)
+    finally:
+        rr_session.rollback()
+        rr_session.close()
+        rr_engine.dispose()

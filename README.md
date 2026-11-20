@@ -65,6 +65,50 @@ docker compose -f docker-compose.test.yml up -d
 export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt_1831_test'
 ```
 
+### 2.1 `0002` 迁移的存量数据前置条件
+
+**新库 / 五张表为空时无需检查，直接 `alembic upgrade head` 即可。**
+
+`0002_tenant_aware_fks` 是纯约束迁移，不搬运数据。如果从 `0001` 升级的库里
+已经存在租户/站点字段不一致的关联记录，`ALTER TABLE ... ADD FOREIGN KEY`
+会失败。升级前先在 `0001` 版本执行以下检查，**所有查询都必须返回 0 行**：
+
+```sql
+-- case / run 的 suite 必须同租户、同站点
+SELECT 'eval_case' AS table_name, c.id
+FROM eval_case c
+JOIN eval_suite s ON s.id = c.suite_id
+WHERE (c.org_id, c.site_id) <> (s.org_id, s.site_id);
+
+SELECT 'eval_run' AS table_name, r.id
+FROM eval_run r
+JOIN eval_suite s ON s.id = r.suite_id
+WHERE (r.org_id, r.site_id) <> (s.org_id, s.site_id);
+
+-- result 的 run / case 必须同套件、同租户、同站点
+SELECT 'eval_result' AS table_name, x.id
+FROM eval_result x
+JOIN eval_run r ON r.id = x.run_id
+JOIN eval_case c ON c.id = x.case_id
+WHERE x.suite_id <> r.suite_id
+   OR x.suite_id <> c.suite_id
+   OR (x.org_id, x.site_id) <> (r.org_id, r.site_id)
+   OR (x.org_id, x.site_id) <> (c.org_id, c.site_id);
+
+-- baseline 的 run / suite 必须同套件、同租户、同站点
+SELECT 'eval_baseline' AS table_name, b.id
+FROM eval_baseline b
+JOIN eval_run r ON r.id = b.run_id
+JOIN eval_suite s ON s.id = b.suite_id
+WHERE b.suite_id <> r.suite_id
+   OR (b.org_id, b.site_id) <> (r.org_id, r.site_id)
+   OR (b.org_id, b.site_id) <> (s.org_id, s.site_id);
+```
+
+若有返回行，先按父行修正子行的 `org_id` / `site_id` / `suite_id`，或清理这批
+测试/脏数据，再重跑检查；确认 0 行后再执行 `0002`。本单不提供自动数据修复，
+避免在迁移里静默改写租户归属。
+
 ---
 
 ## 3. 表结构
@@ -312,11 +356,17 @@ erDiagram
 
 **并发协议（基线永久保留）**：
 
+- 协议要求事务隔离级别为 **`READ COMMITTED`**（PostgreSQL 默认）。
+  `app.locks.acquire_baseline_lock()` 会先执行 `SHOW transaction_isolation`
+  校验；在 `REPEATABLE READ` / `SERIALIZABLE` 下直接抛
+  `LockProtocolError`，避免等锁后继续使用旧快照；
 - 清理与基线写入共用 PostgreSQL 事务级 advisory lock
   `pg_advisory_xact_lock(830183000001)`（`app/locks.py`）；
 - 清理在**选候选之前**取锁，并把筛选条件再次放进 `DELETE` 语句
   （`DELETE ... WHERE run_id IN (SELECT ... 仍满足策略)`），避免“选完 ID 后
   新增基线”的窗口；
+- `app.retention._delete_candidates()` 是内部函数，自身也会取同一把锁；
+  不要绕过 `cleanup_old_results()` / `set_baseline()` 直接调用；
 - 基线写入必须走 `app.baseline.set_baseline()`：先取同一把锁，再校验 run 属于
   指定租户/套件、已是终态且仍有未删除的结果；没有结果的 run 拒绝设为基线；
 - 锁在事务提交/回滚时自动释放。若清理先拿到锁，它会先删结果，基线写入随后
@@ -366,7 +416,7 @@ python scripts/cleanup_results.py --now 2026-11-20T12:00:00Z
 
 本次实测结果：
 
-- `94 passed`（真实 PostgreSQL 16.16；本次 2.11s）
+- `96 passed`（真实 PostgreSQL 16.16；本次 1.81s）
 - `alembic upgrade head` → `downgrade base` → `upgrade head` → `alembic check` 全部成功
 - `alembic current`：`0002_tenant_aware_fks (head)`
 

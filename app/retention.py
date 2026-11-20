@@ -70,18 +70,21 @@ def _eligible_run_ids(cutoff: datetime):
     return select(EvalRun.id).where(*_policy_filter(cutoff))
 
 
-def delete_candidates(
+def _delete_candidates(
     session: Session, result_ids: list[uuid.UUID], cutoff: datetime
 ) -> int:
     """Delete only candidates that still satisfy the policy.
 
-    The policy is re-evaluated inside the same DELETE statement.  A baseline
-    inserted after the candidate SELECT therefore excludes its run instead of
-    being silently ignored, which closes the original check-then-delete race.
+    Internal helper: it takes the same advisory lock itself, so even a direct
+    call cannot bypass the baseline/retention protocol.  The policy is
+    re-evaluated inside the same DELETE statement; a baseline inserted after
+    the candidate SELECT excludes its run instead of being silently ignored.
     """
 
     if not result_ids:
         return 0
+
+    acquire_baseline_lock(session)
 
     result = session.execute(
         delete(EvalResult).where(
@@ -164,7 +167,7 @@ def cleanup_old_results(
         if not ids:
             break
 
-        result = delete_candidates(session, list(ids), cutoff)
+        result = _delete_candidates(session, list(ids), cutoff)
         deleted += result
         # The next SELECT re-applies the policy, so rows protected by a new
         # baseline are naturally left behind.
