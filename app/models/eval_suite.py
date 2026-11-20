@@ -10,7 +10,17 @@ recount child rows with a trigger.
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Index, Integer, String, UniqueConstraint, text
+import uuid
+
+from sqlalchemy import (
+    UUID,
+    CheckConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -21,6 +31,11 @@ class EvalSuite(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
     """A versioned evaluation suite."""
 
     __tablename__ = "eval_suite"
+
+    # Repeated explicitly (instead of only inheriting from TenantMixin) so the
+    # tenant columns are visible to __table_args__ composite constraints.
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
     suite_key: Mapped[str] = mapped_column(
         String(64),
@@ -79,6 +94,12 @@ class EvalSuite(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
             "suite_key",
             "version",
             name="uq_eval_suite_tenant_key_version",
+        ),
+        UniqueConstraint(
+            "id",
+            "org_id",
+            "site_id",
+            name="uq_eval_suite_id_tenant",
         ),
         Index("ix_eval_suite_tenant_status", "org_id", "site_id", "status"),
         Index("ix_eval_suite_tenant_tool", "org_id", "site_id", "tool"),

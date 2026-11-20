@@ -36,6 +36,9 @@ class EvalCase(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "eval_case"
 
+    # Explicit tenant columns keep __table_args__ composite FKs visible.
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     suite_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     case_key: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="Stable identifier inside the suite"
@@ -99,9 +102,9 @@ class EvalCase(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["suite_id"],
-            ["eval_suite.id"],
-            name="fk_eval_case_suite_id",
+            ["suite_id", "org_id", "site_id"],
+            ["eval_suite.id", "eval_suite.org_id", "eval_suite.site_id"],
+            name="fk_eval_case_suite_tenant",
             ondelete="RESTRICT",
         ),
         CheckConstraint(
@@ -137,7 +140,13 @@ class EvalCase(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
             name="ck_eval_case_key_format",
         ),
         UniqueConstraint("suite_id", "case_key", name="uq_eval_case_suite_case_key"),
-        UniqueConstraint("id", "suite_id", name="uq_eval_case_id_suite"),
+        UniqueConstraint(
+            "id",
+            "suite_id",
+            "org_id",
+            "site_id",
+            name="uq_eval_case_id_suite_tenant",
+        ),
         Index("ix_eval_case_tenant_suite", "org_id", "site_id", "suite_id"),
         Index("ix_eval_case_suite_review", "suite_id", "review_state"),
     )

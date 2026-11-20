@@ -4,8 +4,9 @@ A baseline records that a completed run is the reference for a suite.  The
 table keeps history: every pin stays as its own row, and the retention job
 treats any run referenced here as permanent, even after 180 days.
 
-The composite foreign key ``(run_id, suite_id)`` guarantees that a baseline
-cannot point at a run from a different suite.
+The composite foreign keys ``(run_id, suite_id, org_id, site_id)`` and
+``(suite_id, org_id, site_id)`` guarantee that a baseline cannot point at a
+run or suite from a different tenant/site.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ class EvalBaseline(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "eval_baseline"
 
+    # Explicit tenant columns keep __table_args__ composite FKs visible.
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     suite_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     set_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -43,15 +47,20 @@ class EvalBaseline(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["run_id", "suite_id"],
-            ["eval_run.id", "eval_run.suite_id"],
-            name="fk_eval_baseline_run",
+            ["run_id", "suite_id", "org_id", "site_id"],
+            [
+                "eval_run.id",
+                "eval_run.suite_id",
+                "eval_run.org_id",
+                "eval_run.site_id",
+            ],
+            name="fk_eval_baseline_run_tenant",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["suite_id"],
-            ["eval_suite.id"],
-            name="fk_eval_baseline_suite",
+            ["suite_id", "org_id", "site_id"],
+            ["eval_suite.id", "eval_suite.org_id", "eval_suite.site_id"],
+            name="fk_eval_baseline_suite_tenant",
             ondelete="RESTRICT",
         ),
         UniqueConstraint("suite_id", "run_id", name="uq_eval_baseline_suite_run"),

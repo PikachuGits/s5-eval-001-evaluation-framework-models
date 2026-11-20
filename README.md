@@ -5,7 +5,8 @@ ClawHunt 工单 **#1831** 交付物。本仓库包含 AI 辅助工具评测框�
 Alembic 迁移、180 天结果清理脚本、Pydantic schema、Mermaid ER 图与 pytest 测试。
 
 - 数据库：PostgreSQL 16（本次实测 16.16）
-- 本次运行：**83 passed**（真实 PostgreSQL，`alembic check` 零漂移）
+- 公开仓库：<https://github.com/PikachuGits/s5-eval-001-evaluation-framework-models>
+- 本次运行：**测试结果见 `evidence/test-results.txt`**（真实 PostgreSQL，`alembic check` 零漂移）
 - 证据：`evidence/test-results.txt`、`evidence/migration-check.txt`
 
 > **边界声明（先读）**
@@ -95,6 +96,7 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 约束与索引：
 
 - `UNIQUE (org_id, site_id, suite_key, version)`：同一租户站点下同一版本唯一；
+- `UNIQUE (id, org_id, site_id)`：供 case/run/baseline 的租户感知复合外键引用；
 - `CHECK`：`tool`、`status`、`version >= 1`、`case_count >= 0`、`suite_key` 格式；
 - `ix_eval_suite_tenant_status (org_id, site_id, status)`、`ix_eval_suite_tenant_tool (org_id, site_id, tool)`。
 
@@ -102,7 +104,7 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 
 | 列 | 类型 | 空 | 默认 | 说明 |
 |---|---|---|---|---|
-| `suite_id` | UUID | 否 | — | FK → `eval_suite.id`，`ON DELETE RESTRICT` |
+| `suite_id` | UUID | 否 | — | 租户感知复合 FK `(suite_id, org_id, site_id) → eval_suite(id, org_id, site_id)`，`ON DELETE RESTRICT` |
 | `case_key` | VARCHAR(64) | 否 | — | 套件内稳定标识，如 `CASE-001` |
 | `input` | JSONB | 否 | `'{}'` | 传给被测工具的输入，必须是 JSON 对象 |
 | `context` | JSONB | 否 | `'{}'` | 上下文夹具，必须是 JSON 对象 |
@@ -117,7 +119,7 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 约束与索引：
 
 - `UNIQUE (suite_id, case_key)`：同一套件内用例标识唯一；
-- `UNIQUE (id, suite_id)`：供 `eval_result` 的复合外键引用；
+- `UNIQUE (id, suite_id, org_id, site_id)`：供租户感知结果外键引用；
 - `CHECK`：枚举、`weight > 0`、JSON 形状（`input`/`context` 为 object，两个 points 为 array）；
 - `ix_eval_case_tenant_suite (org_id, site_id, suite_id)`、`ix_eval_case_suite_review (suite_id, review_state)`。
 
@@ -125,7 +127,7 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 
 | 列 | 类型 | 空 | 默认 | 说明 |
 |---|---|---|---|---|
-| `suite_id` | UUID | 否 | — | FK → `eval_suite.id`，`ON DELETE RESTRICT` |
+| `suite_id` | UUID | 否 | — | 租户感知复合 FK `(suite_id, org_id, site_id) → eval_suite(id, org_id, site_id)`，`ON DELETE RESTRICT` |
 | `suite_version` | INTEGER | 否 | — | 运行所锁定的套件版本，≥ 1 |
 | `target_tool` | VARCHAR(32) | 否 | — | 被测工具，取值同 `eval_suite.tool` |
 | `target_prompt_version` | VARCHAR(64) | 是 | — | Prompt 版本 |
@@ -141,7 +143,7 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 
 约束与索引：
 
-- `UNIQUE (id, suite_id)`：供 `eval_result` / `eval_baseline` 的复合外键引用；
+- `UNIQUE (id, suite_id, org_id, site_id)`：供 `eval_result` / `eval_baseline` 的租户感知外键引用；
 - `CHECK`：`target_tool`、`trigger`、`status`、`suite_version`、`pass_rate` 区间、`score_avg`、`token_usage`、时间顺序、`git_sha` 格式；
 - `ix_eval_run_suite_started (suite_id, started_at)`、`ix_eval_run_tenant_status (org_id, site_id, status)`。
 
@@ -149,9 +151,9 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 
 | 列 | 类型 | 空 | 默认 | 说明 |
 |---|---|---|---|---|
-| `run_id` | UUID | 否 | — | 复合 FK `(run_id, suite_id) → eval_run(id, suite_id)`，`ON DELETE CASCADE` |
-| `case_id` | UUID | 否 | — | 复合 FK `(case_id, suite_id) → eval_case(id, suite_id)`，`ON DELETE RESTRICT` |
-| `suite_id` | UUID | 否 | — | 必须同时匹配 run 与 case 的套件 |
+| `run_id` | UUID | 否 | — | 租户感知复合 FK `(run_id, suite_id, org_id, site_id) → eval_run(id, suite_id, org_id, site_id)`，`ON DELETE CASCADE` |
+| `case_id` | UUID | 否 | — | 租户感知复合 FK `(case_id, suite_id, org_id, site_id) → eval_case(id, suite_id, org_id, site_id)`，`ON DELETE RESTRICT` |
+| `suite_id` | UUID | 否 | — | 必须同时匹配 run、case 及本行的 `org_id` / `site_id` |
 | `output_text` | TEXT | 是 | — | 原始输出 |
 | `output_json` | JSONB | 是 | — | 结构化输出，可为任意 JSON |
 | `score` | NUMERIC(6,3) | 是 | — | 0–100；判分失败时为空 |
@@ -166,15 +168,15 @@ export TEST_DATABASE_URL='postgresql+psycopg://clawhunt@127.0.0.1:55435/clawhunt
 
 - **`UNIQUE (run_id, case_id)`**：同一 run 对同一用例只能有一行结果（AC-2），
   PostgreSQL 自动建立同名唯一索引 `uq_eval_result_run_case`；
-- 复合外键保证「结果不能引用别的套件的用例」「run 删除时结果级联清理」「用例仍被结果引用时禁止硬删」；
+- 复合外键保证「结果不能引用别的套件/别的租户的用例」「run 删除时结果级联清理」「用例仍被结果引用时禁止硬删」；
 - `ix_eval_result_tenant_run (org_id, site_id, run_id)`、`ix_eval_result_case (case_id)`。
 
 ### 3.5 `eval_baseline`（基线）
 
 | 列 | 类型 | 空 | 默认 | 说明 |
 |---|---|---|---|---|
-| `suite_id` | UUID | 否 | — | FK → `eval_suite.id`，`ON DELETE RESTRICT` |
-| `run_id` | UUID | 否 | — | 复合 FK `(run_id, suite_id) → eval_run(id, suite_id)`，`ON DELETE RESTRICT` |
+| `suite_id` | UUID | 否 | — | 租户感知复合 FK `(suite_id, org_id, site_id) → eval_suite(id, org_id, site_id)`，`ON DELETE RESTRICT` |
+| `run_id` | UUID | 否 | — | 租户感知复合 FK `(run_id, suite_id, org_id, site_id) → eval_run(id, suite_id, org_id, site_id)`，`ON DELETE RESTRICT` |
 | `set_by` | UUID | 是 | — | 设置人 |
 | `set_at` | TIMESTAMPTZ | 否 | `now()` | 设置时间 |
 | `note` | TEXT | 是 | — | 备注 |
@@ -274,10 +276,14 @@ erDiagram
 
 ## 5. 关键设计决策
 
-1. **复合外键而不是应用层校验**：`eval_result` 同时用 `(run_id, suite_id)` 和
-   `(case_id, suite_id)` 两个复合外键，数据库层面保证结果不会串套件、不会串租户；
-   `eval_baseline` 同理。为此 `eval_run` / `eval_case` 各多了一条
-   `UNIQUE (id, suite_id)`（PostgreSQL 要求被引用列对有唯一约束）。
+1. **租户感知复合外键而不是应用层校验**：`eval_result` 同时用
+   `(run_id, suite_id, org_id, site_id)` 和 `(case_id, suite_id, org_id, site_id)`
+   两个复合外键，`eval_baseline` 用同样的租户字段；数据库层面保证结果/基线
+   不会串套件、不会串租户或站点。为此 `eval_suite` 增加
+   `UNIQUE (id, org_id, site_id)`，`eval_case` / `eval_run` 增加
+   `UNIQUE (id, suite_id, org_id, site_id)`（PostgreSQL 要求被引用列组有唯一约束）。
+   **注意**：这保证“不能链接到别的租户”，不保证“不能读到别的租户”；读取隔离
+   仍需应用层查询过滤或 PostgreSQL RLS，本单未启用 RLS。
 2. **结果唯一键**：`UNIQUE (run_id, case_id)` 是 AC-2 的唯一事实来源。worker 重试
    应捕获 `IntegrityError` 后改为更新原行，而不是插入第二行。
 3. **`case_count` 是缓存列**：新增/删除用例时由应用层增减；数据库只保证 ≥ 0，
@@ -303,6 +309,19 @@ erDiagram
 - 运行年龄按 `COALESCE(finished_at, started_at)` 计算，从未结束的运行按 `started_at`；
 - 清理是**硬删除**，早先软删除的结果行在超过保留期后也会被物理回收；
 - 判定为“超过 180 天”使用严格小于：恰好 180 天前的结果保留到下一轮。
+
+**并发协议（基线永久保留）**：
+
+- 清理与基线写入共用 PostgreSQL 事务级 advisory lock
+  `pg_advisory_xact_lock(830183000001)`（`app/locks.py`）；
+- 清理在**选候选之前**取锁，并把筛选条件再次放进 `DELETE` 语句
+  （`DELETE ... WHERE run_id IN (SELECT ... 仍满足策略)`），避免“选完 ID 后
+  新增基线”的窗口；
+- 基线写入必须走 `app.baseline.set_baseline()`：先取同一把锁，再校验 run 属于
+  指定租户/套件、已是终态且仍有未删除的结果；没有结果的 run 拒绝设为基线；
+- 锁在事务提交/回滚时自动释放。若清理先拿到锁，它会先删结果，基线写入随后
+  看到 0 条结果而拒绝；若基线写入先拿到锁，清理随后会看到基线并跳过该 run。
+  两端都绕过锁直接裸写数据库时，数据库无法单独阻止竞态。
 
 用法：
 
@@ -347,9 +366,9 @@ python scripts/cleanup_results.py --now 2026-11-20T12:00:00Z
 
 本次实测结果：
 
-- `83 passed in 1.75s`（真实 PostgreSQL 16.16）
-- `alembic upgrade head` → `downgrade -1` → `upgrade head` → `alembic check` 全部成功
-- `alembic current`：`0001_eval_framework_tables (head)`
+- `94 passed`（真实 PostgreSQL 16.16；本次 2.11s）
+- `alembic upgrade head` → `downgrade base` → `upgrade head` → `alembic check` 全部成功
+- `alembic current`：`0002_tenant_aware_fks (head)`
 
 ---
 
@@ -359,12 +378,15 @@ python scripts/cleanup_results.py --now 2026-11-20T12:00:00Z
 app/
   db.py                 # Base、DATABASE_URL 读取
   enums.py              # 枚举与常量
-  retention.py          # 180 天清理策略（可注入 now）
+  locks.py              # 基线与清理共用的 advisory lock
+  baseline.py           # 基线写入（持锁 + 租户/套件校验）
+  retention.py          # 180 天清理策略（可注入 now、DELETE 时复检）
   models/               # 5 张表的 SQLAlchemy 2 模型
   schemas/              # Pydantic 创建/读取 schema
 migrations/
   env.py
   versions/0001_eval_framework_tables.py
+  versions/0002_tenant_aware_fks.py
 scripts/
   cleanup_results.py    # CLI：--dry-run / --days / --batch-size / --now
   migration-check.sh    # AC-1 证据

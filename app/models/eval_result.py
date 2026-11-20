@@ -6,14 +6,15 @@ for the same case, it hits the constraint and must update the existing row.
 
 The two composite foreign keys are deliberate:
 
-* ``(run_id, suite_id) -> eval_run (id, suite_id)`` with ``ON DELETE CASCADE``
-  so deleting a run cannot leave orphan results;
-* ``(case_id, suite_id) -> eval_case (id, suite_id)`` with ``ON DELETE
-  RESTRICT`` so a result can only reference a case from the run's own suite.
+* ``(run_id, suite_id, org_id, site_id) -> eval_run`` with ``ON DELETE
+  CASCADE`` so deleting a run cannot leave orphan results;
+* ``(case_id, suite_id, org_id, site_id) -> eval_case`` with ``ON DELETE
+  RESTRICT`` so a result can only reference a case from the run's own suite
+  and the same tenant/site.
 
-PostgreSQL requires the referenced column pairs to be backed by unique
-constraints; ``eval_run`` and ``eval_case`` therefore carry a redundant
-``UNIQUE (id, suite_id)`` next to their primary keys.
+PostgreSQL requires the referenced column tuples to be backed by unique
+constraints; ``eval_run`` and ``eval_case`` therefore carry redundant
+``UNIQUE (id, suite_id, org_id, site_id)`` keys next to their primary keys.
 """
 
 from __future__ import annotations
@@ -45,6 +46,9 @@ class EvalResult(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "eval_result"
 
+    # Explicit tenant columns keep __table_args__ composite FKs visible.
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     suite_id: Mapped[uuid.UUID] = mapped_column(
@@ -86,15 +90,25 @@ class EvalResult(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["run_id", "suite_id"],
-            ["eval_run.id", "eval_run.suite_id"],
-            name="fk_eval_result_run",
+            ["run_id", "suite_id", "org_id", "site_id"],
+            [
+                "eval_run.id",
+                "eval_run.suite_id",
+                "eval_run.org_id",
+                "eval_run.site_id",
+            ],
+            name="fk_eval_result_run_tenant",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["case_id", "suite_id"],
-            ["eval_case.id", "eval_case.suite_id"],
-            name="fk_eval_result_case",
+            ["case_id", "suite_id", "org_id", "site_id"],
+            [
+                "eval_case.id",
+                "eval_case.suite_id",
+                "eval_case.org_id",
+                "eval_case.site_id",
+            ],
+            name="fk_eval_result_case_tenant",
             ondelete="RESTRICT",
         ),
         CheckConstraint(

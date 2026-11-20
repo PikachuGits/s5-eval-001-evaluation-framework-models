@@ -1,14 +1,16 @@
 == alembic upgrade head ==
 INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
 INFO  [alembic.runtime.migration] Will assume transactional DDL.
-== alembic downgrade -1 ==
+== alembic downgrade base ==
 INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
 INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade 0002_tenant_aware_fks -> 0001_eval_framework_tables, make evaluation foreign keys tenant-aware
 INFO  [alembic.runtime.migration] Running downgrade 0001_eval_framework_tables -> , create evaluation framework tables
 == alembic upgrade head ==
 INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
 INFO  [alembic.runtime.migration] Will assume transactional DDL.
 INFO  [alembic.runtime.migration] Running upgrade  -> 0001_eval_framework_tables, create evaluation framework tables
+INFO  [alembic.runtime.migration] Running upgrade 0001_eval_framework_tables -> 0002_tenant_aware_fks, make evaluation foreign keys tenant-aware
 == alembic check ==
 INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
 INFO  [alembic.runtime.migration] Will assume transactional DDL.
@@ -16,4 +18,4 @@ No new upgrade operations detected.
 == alembic current ==
 INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
 INFO  [alembic.runtime.migration] Will assume transactional DDL.
-0001_eval_framework_tables (head)
+0002_tenant_aware_fks (head)

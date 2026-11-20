@@ -17,6 +17,7 @@ from app.models.eval_suite import EvalSuite
 from tests.factories import (
     ACTOR_ID,
     ORG_ID,
+    OTHER_ORG_ID,
     OTHER_SITE_ID,
     SITE_ID,
     create_case,
@@ -282,9 +283,9 @@ def test_result_rejects_case_from_another_suite(session):
     case_two = create_case(session, suite_two, case_key="CASE-002")
 
     # ``suite_id`` matches the run, but the case belongs to another suite;
-    # the composite FK (case_id, suite_id) must reject it.
+    # the tenant-aware composite FK must reject it.
     session.add(make_result(run, case_two, suite_id=suite_one.id))
-    with pytest.raises(IntegrityError, match="fk_eval_result_case"):
+    with pytest.raises(IntegrityError, match="fk_eval_result_case_tenant"):
         session.flush()
     session.rollback()
 
@@ -295,7 +296,76 @@ def test_baseline_rejects_run_from_another_suite(session):
     run_two = create_run(session, suite_two)
 
     session.add(make_baseline(suite_one, run_two))
-    with pytest.raises(IntegrityError, match="fk_eval_baseline_run"):
+    with pytest.raises(IntegrityError, match="fk_eval_baseline_run_tenant"):
+        session.flush()
+    session.rollback()
+
+
+def test_case_rejects_suite_from_another_tenant(session):
+    suite = create_suite(session)
+    session.add(
+        make_case(
+            suite.id,
+            org_id=OTHER_ORG_ID,
+            site_id=SITE_ID,
+            case_key="CASE-OTHER-ORG",
+        )
+    )
+    with pytest.raises(IntegrityError, match="fk_eval_case_suite_tenant"):
+        session.flush()
+    session.rollback()
+
+
+def test_run_rejects_suite_from_another_site(session):
+    suite = create_suite(session)
+    session.add(
+        make_run(
+            suite,
+            org_id=ORG_ID,
+            site_id=OTHER_SITE_ID,
+            suite_version=suite.version,
+        )
+    )
+    with pytest.raises(IntegrityError, match="fk_eval_run_suite_tenant"):
+        session.flush()
+    session.rollback()
+
+
+def test_result_rejects_cross_tenant_links(session):
+    suite = create_suite(session)
+    case = create_case(session, suite)
+    run = create_run(session, suite)
+
+    session.add(
+        make_result(
+            run,
+            case,
+            org_id=OTHER_ORG_ID,
+            site_id=OTHER_SITE_ID,
+        )
+    )
+    with pytest.raises(
+        IntegrityError, match=r"fk_eval_result_(run|case)_tenant"
+    ):
+        session.flush()
+    session.rollback()
+
+
+def test_baseline_rejects_cross_tenant_links(session):
+    suite = create_suite(session)
+    run = create_run(session, suite)
+
+    session.add(
+        make_baseline(
+            suite,
+            run,
+            org_id=OTHER_ORG_ID,
+            site_id=OTHER_SITE_ID,
+        )
+    )
+    with pytest.raises(
+        IntegrityError, match=r"fk_eval_baseline_(run|suite)_tenant"
+    ):
         session.flush()
     session.rollback()
 
@@ -324,7 +394,7 @@ def test_deleting_a_case_is_restricted_while_results_exist(session):
     session.commit()
 
     session.delete(case)
-    with pytest.raises(IntegrityError, match="fk_eval_result_case"):
+    with pytest.raises(IntegrityError, match="fk_eval_result_case_tenant"):
         session.flush()
     session.rollback()
 

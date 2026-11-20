@@ -10,7 +10,7 @@ Composite foreign keys enforce two invariants that plain column-level FKs
 cannot express:
 
 * ``eval_result (run_id, suite_id) -> eval_run (id, suite_id)`` — results
-  cannot point at a run from another tenant scope;
+  cannot point at a run from another suite (tenant fields added in 0002);
 * ``eval_result (case_id, suite_id) -> eval_case (id, suite_id)`` — a result
   cannot judge a case that belongs to a different suite than its run;
 * ``eval_baseline (run_id, suite_id) -> eval_run (id, suite_id)`` — a baseline

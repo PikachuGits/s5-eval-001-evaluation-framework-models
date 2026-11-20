@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AC-1 evidence: upgrade head -> downgrade -1 -> upgrade head -> alembic check.
+# AC-1 evidence: upgrade head -> downgrade base -> upgrade head -> alembic check.
 #
 #   DATABASE_URL='postgresql+psycopg://USER:PASSWORD@127.0.0.1:5432/DB_NAME' \
 #     ./scripts/migration-check.sh
@@ -15,8 +15,8 @@ fi
 
 echo "== alembic upgrade head =="
 .venv/bin/alembic upgrade head
-echo "== alembic downgrade -1 =="
-.venv/bin/alembic downgrade -1
+echo "== alembic downgrade base =="
+.venv/bin/alembic downgrade base
 echo "== alembic upgrade head =="
 .venv/bin/alembic upgrade head
 echo "== alembic check =="

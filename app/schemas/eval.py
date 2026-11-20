@@ -206,6 +206,10 @@ class EvalResultBase(BaseModel):
 
     run_id: uuid.UUID
     case_id: uuid.UUID
+    suite_id: uuid.UUID = Field(
+        description="Must equal both the run's and the case's suite_id; "
+        "the database composite FKs enforce this."
+    )
     output_text: str | None = None
     output_json: Any | None = None
     score: Decimal | None = Field(default=None, ge=0, le=100, max_digits=6, decimal_places=3)
@@ -229,6 +233,7 @@ class EvalResultRead(TenantFields):
     id: uuid.UUID
     run_id: uuid.UUID
     case_id: uuid.UUID
+    suite_id: uuid.UUID
     output_text: str | None
     output_json: Any | None
     score: Decimal | None

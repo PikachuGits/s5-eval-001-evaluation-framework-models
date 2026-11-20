@@ -15,12 +15,14 @@ were soft-deleted earlier are also removed once their run is out of policy.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.locks import acquire_baseline_lock
 from app.models.eval_baseline import EvalBaseline
 from app.models.eval_result import EvalResult
 from app.models.eval_run import EvalRun
@@ -62,6 +64,35 @@ def _policy_filter(cutoff: datetime):
     )
 
 
+def _eligible_run_ids(cutoff: datetime):
+    """Runs whose results may be deleted, evaluated at DELETE time."""
+
+    return select(EvalRun.id).where(*_policy_filter(cutoff))
+
+
+def delete_candidates(
+    session: Session, result_ids: list[uuid.UUID], cutoff: datetime
+) -> int:
+    """Delete only candidates that still satisfy the policy.
+
+    The policy is re-evaluated inside the same DELETE statement.  A baseline
+    inserted after the candidate SELECT therefore excludes its run instead of
+    being silently ignored, which closes the original check-then-delete race.
+    """
+
+    if not result_ids:
+        return 0
+
+    result = session.execute(
+        delete(EvalResult).where(
+            EvalResult.id.in_(result_ids),
+            EvalResult.run_id.in_(_eligible_run_ids(cutoff)),
+        )
+    )
+    session.flush()
+    return int(result.rowcount or 0)
+
+
 def count_cleanup_candidates(
     session: Session,
     *,
@@ -97,10 +128,16 @@ def cleanup_old_results(
 
     ``now`` is injectable so tests can freeze time.  The caller owns the
     transaction: commit afterwards for a real run, roll back for a rehearsal.
+    The transaction-scoped baseline lock is held until that commit/rollback.
     """
 
     if batch_size < 1 or batch_size > MAX_BATCH_SIZE:
         raise ValueError(f"batch_size must be between 1 and {MAX_BATCH_SIZE}")
+
+    # Serialize with baseline writers.  Without this, a baseline inserted
+    # between the candidate SELECT and the DELETE could pin a run whose rows
+    # are already on the delete path.
+    acquire_baseline_lock(session)
 
     current, cutoff, candidate_count = count_cleanup_candidates(
         session, now=now, retention_days=retention_days
@@ -127,13 +164,10 @@ def cleanup_old_results(
         if not ids:
             break
 
-        result = session.execute(
-            delete(EvalResult).where(EvalResult.id.in_(list(ids)))
-        )
-        deleted += int(result.rowcount or 0)
-        # Batch statements are independent; flush keeps the next SELECT from
-        # re-reading rows deleted in this pass.
-        session.flush()
+        result = delete_candidates(session, list(ids), cutoff)
+        deleted += result
+        # The next SELECT re-applies the policy, so rows protected by a new
+        # baseline are naturally left behind.
 
     return CleanupReport(
         now=current,

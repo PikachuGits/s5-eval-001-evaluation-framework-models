@@ -38,6 +38,9 @@ class EvalRun(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "eval_run"
 
+    # Explicit tenant columns keep __table_args__ composite FKs visible.
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     suite_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     suite_version: Mapped[int] = mapped_column(Integer, nullable=False)
     target_tool: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -79,9 +82,9 @@ class EvalRun(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["suite_id"],
-            ["eval_suite.id"],
-            name="fk_eval_run_suite_id",
+            ["suite_id", "org_id", "site_id"],
+            ["eval_suite.id", "eval_suite.org_id", "eval_suite.site_id"],
+            name="fk_eval_run_suite_tenant",
             ondelete="RESTRICT",
         ),
         CheckConstraint(
@@ -121,7 +124,13 @@ class EvalRun(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
             "git_sha IS NULL OR git_sha ~ '^[0-9a-f]{7,64}$'",
             name="ck_eval_run_git_sha_format",
         ),
-        UniqueConstraint("id", "suite_id", name="uq_eval_run_id_suite"),
+        UniqueConstraint(
+            "id",
+            "suite_id",
+            "org_id",
+            "site_id",
+            name="uq_eval_run_id_suite_tenant",
+        ),
         Index("ix_eval_run_suite_started", "suite_id", "started_at"),
         Index("ix_eval_run_tenant_status", "org_id", "site_id", "status"),
     )

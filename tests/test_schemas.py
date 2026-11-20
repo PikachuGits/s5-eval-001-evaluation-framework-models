@@ -7,10 +7,12 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
+from app.models.eval_result import EvalResult
 from app.schemas.eval import (
     EvalCaseCreate,
     EvalCaseRead,
     EvalResultCreate,
+    EvalResultRead,
     EvalRunCreate,
     EvalSuiteCreate,
     EvalSuiteRead,
@@ -18,6 +20,7 @@ from app.schemas.eval import (
 from tests.factories import (
     case_payload,
     create_case,
+    create_run,
     create_suite,
     result_payload,
     run_payload,
@@ -111,3 +114,37 @@ def test_read_schemas_project_orm_rows(session):
     case_read = EvalCaseRead.model_validate(case)
     assert case_read.input["question"].startswith("虚构问题")
     assert case_read.weight == case.weight
+
+
+
+def test_result_schema_requires_suite_id():
+    payload = result_payload()
+    payload.pop("suite_id")
+    with pytest.raises(ValidationError) as excinfo:
+        EvalResultCreate.model_validate(payload)
+    assert any(error["loc"] == ("suite_id",) for error in excinfo.value.errors())
+
+
+def test_result_create_maps_to_orm_with_suite_id(session):
+    suite = create_suite(session)
+    case = create_case(session, suite)
+    run = create_run(session, suite)
+
+    payload = result_payload(
+        org_id=run.org_id,
+        site_id=run.site_id,
+        run_id=run.id,
+        case_id=case.id,
+        suite_id=suite.id,
+    )
+    schema = EvalResultCreate.model_validate(payload)
+    record = EvalResult(**schema.model_dump())
+    session.add(record)
+    session.flush()
+
+    assert record.run_id == run.id
+    assert record.case_id == case.id
+    assert record.suite_id == suite.id
+
+    read = EvalResultRead.model_validate(record)
+    assert read.suite_id == suite.id

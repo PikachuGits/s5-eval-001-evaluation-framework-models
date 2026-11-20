@@ -1,6 +1,6 @@
 """AC-1: migration round-trip, schema shape and zero drift.
 
-``alembic upgrade head`` -> ``downgrade -1`` -> ``upgrade head`` must all work,
+``alembic upgrade head`` -> ``downgrade base`` -> ``upgrade head`` must all work,
 and ``alembic check`` must report no new upgrade operations.
 """
 
@@ -128,7 +128,7 @@ def test_tables_and_revision_are_applied(engine):
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0001_eval_framework_tables"
+    assert revision == "0002_tenant_aware_fks"
 
 
 def test_suite_columns_and_types(engine):
@@ -295,6 +295,11 @@ def test_unique_constraints(engine):
         == {"org_id", "site_id", "suite_key", "version"}
         for constraint in suite_unique
     )
+    assert any(
+        constraint["name"] == "uq_eval_suite_id_tenant"
+        and set(constraint["column_names"]) == {"id", "org_id", "site_id"}
+        for constraint in suite_unique
+    )
 
     case_unique = inspector.get_unique_constraints("eval_case")
     assert any(
@@ -303,15 +308,17 @@ def test_unique_constraints(engine):
         for constraint in case_unique
     )
     assert any(
-        constraint["name"] == "uq_eval_case_id_suite"
-        and set(constraint["column_names"]) == {"id", "suite_id"}
+        constraint["name"] == "uq_eval_case_id_suite_tenant"
+        and set(constraint["column_names"])
+        == {"id", "suite_id", "org_id", "site_id"}
         for constraint in case_unique
     )
 
     run_unique = inspector.get_unique_constraints("eval_run")
     assert any(
-        constraint["name"] == "uq_eval_run_id_suite"
-        and set(constraint["column_names"]) == {"id", "suite_id"}
+        constraint["name"] == "uq_eval_run_id_suite_tenant"
+        and set(constraint["column_names"])
+        == {"id", "suite_id", "org_id", "site_id"}
         for constraint in run_unique
     )
 
@@ -351,59 +358,104 @@ def test_foreign_keys(engine):
 
     case_fks = inspector.get_foreign_keys("eval_case")
     assert len(case_fks) == 1
-    assert case_fks[0]["name"] == "fk_eval_case_suite_id"
-    assert case_fks[0]["constrained_columns"] == ["suite_id"]
+    assert case_fks[0]["name"] == "fk_eval_case_suite_tenant"
+    assert case_fks[0]["constrained_columns"] == ["suite_id", "org_id", "site_id"]
     assert case_fks[0]["referred_table"] == "eval_suite"
+    assert case_fks[0]["referred_columns"] == ["id", "org_id", "site_id"]
     assert case_fks[0]["options"].get("ondelete") == "RESTRICT"
 
     run_fks = inspector.get_foreign_keys("eval_run")
     assert len(run_fks) == 1
-    assert run_fks[0]["name"] == "fk_eval_run_suite_id"
-    assert run_fks[0]["constrained_columns"] == ["suite_id"]
+    assert run_fks[0]["name"] == "fk_eval_run_suite_tenant"
+    assert run_fks[0]["constrained_columns"] == ["suite_id", "org_id", "site_id"]
     assert run_fks[0]["referred_table"] == "eval_suite"
+    assert run_fks[0]["referred_columns"] == ["id", "org_id", "site_id"]
     assert run_fks[0]["options"].get("ondelete") == "RESTRICT"
 
     result_fks = {
         foreign_key["name"]: foreign_key
         for foreign_key in inspector.get_foreign_keys("eval_result")
     }
-    assert set(result_fks) == {"fk_eval_result_run", "fk_eval_result_case"}
-    assert result_fks["fk_eval_result_run"]["constrained_columns"] == [
+    assert set(result_fks) == {
+        "fk_eval_result_run_tenant",
+        "fk_eval_result_case_tenant",
+    }
+    assert result_fks["fk_eval_result_run_tenant"]["constrained_columns"] == [
         "run_id",
         "suite_id",
+        "org_id",
+        "site_id",
     ]
-    assert result_fks["fk_eval_result_run"]["referred_table"] == "eval_run"
-    assert result_fks["fk_eval_result_run"]["referred_columns"] == ["id", "suite_id"]
-    assert result_fks["fk_eval_result_run"]["options"].get("ondelete") == "CASCADE"
-    assert result_fks["fk_eval_result_case"]["constrained_columns"] == [
+    assert result_fks["fk_eval_result_run_tenant"]["referred_table"] == "eval_run"
+    assert result_fks["fk_eval_result_run_tenant"]["referred_columns"] == [
+        "id",
+        "suite_id",
+        "org_id",
+        "site_id",
+    ]
+    assert (
+        result_fks["fk_eval_result_run_tenant"]["options"].get("ondelete")
+        == "CASCADE"
+    )
+    assert result_fks["fk_eval_result_case_tenant"]["constrained_columns"] == [
         "case_id",
         "suite_id",
+        "org_id",
+        "site_id",
     ]
-    assert result_fks["fk_eval_result_case"]["referred_table"] == "eval_case"
-    assert result_fks["fk_eval_result_case"]["referred_columns"] == ["id", "suite_id"]
-    assert result_fks["fk_eval_result_case"]["options"].get("ondelete") == "RESTRICT"
+    assert result_fks["fk_eval_result_case_tenant"]["referred_table"] == "eval_case"
+    assert result_fks["fk_eval_result_case_tenant"]["referred_columns"] == [
+        "id",
+        "suite_id",
+        "org_id",
+        "site_id",
+    ]
+    assert (
+        result_fks["fk_eval_result_case_tenant"]["options"].get("ondelete")
+        == "RESTRICT"
+    )
 
     baseline_fks = {
         foreign_key["name"]: foreign_key
         for foreign_key in inspector.get_foreign_keys("eval_baseline")
     }
     assert set(baseline_fks) == {
-        "fk_eval_baseline_run",
-        "fk_eval_baseline_suite",
+        "fk_eval_baseline_run_tenant",
+        "fk_eval_baseline_suite_tenant",
     }
-    assert baseline_fks["fk_eval_baseline_run"]["constrained_columns"] == [
+    assert baseline_fks["fk_eval_baseline_run_tenant"]["constrained_columns"] == [
         "run_id",
         "suite_id",
+        "org_id",
+        "site_id",
     ]
-    assert baseline_fks["fk_eval_baseline_run"]["referred_columns"] == [
+    assert baseline_fks["fk_eval_baseline_run_tenant"]["referred_columns"] == [
         "id",
         "suite_id",
+        "org_id",
+        "site_id",
     ]
-    assert baseline_fks["fk_eval_baseline_run"]["options"].get("ondelete") == "RESTRICT"
-    assert baseline_fks["fk_eval_baseline_suite"]["constrained_columns"] == ["suite_id"]
-    assert baseline_fks["fk_eval_baseline_suite"]["referred_table"] == "eval_suite"
     assert (
-        baseline_fks["fk_eval_baseline_suite"]["options"].get("ondelete") == "RESTRICT"
+        baseline_fks["fk_eval_baseline_run_tenant"]["options"].get("ondelete")
+        == "RESTRICT"
+    )
+    assert baseline_fks["fk_eval_baseline_suite_tenant"]["constrained_columns"] == [
+        "suite_id",
+        "org_id",
+        "site_id",
+    ]
+    assert (
+        baseline_fks["fk_eval_baseline_suite_tenant"]["referred_table"]
+        == "eval_suite"
+    )
+    assert baseline_fks["fk_eval_baseline_suite_tenant"]["referred_columns"] == [
+        "id",
+        "org_id",
+        "site_id",
+    ]
+    assert (
+        baseline_fks["fk_eval_baseline_suite_tenant"]["options"].get("ondelete")
+        == "RESTRICT"
     )
 
 
@@ -440,7 +492,7 @@ def test_upgrade_downgrade_upgrade_and_zero_drift(engine, alembic_config):
 
     assert DELIVERY_TABLES <= set(inspect(engine).get_table_names())
 
-    command.downgrade(alembic_config, "-1")
+    command.downgrade(alembic_config, "base")
 
     inspector = inspect(engine)
     assert not (DELIVERY_TABLES & set(inspector.get_table_names()))

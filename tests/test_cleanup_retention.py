@@ -13,15 +13,25 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from sqlalchemy import func, select
+from sqlalchemy.orm import sessionmaker
 
+from app.baseline import BaselineError, set_baseline
+from app.locks import BASELINE_LOCK_KEY, acquire_baseline_lock
 from app.models.eval_result import EvalResult
+from app.models.eval_run import EvalRun
 from app.retention import (
     RETENTION_DAYS,
+    _policy_filter,
     cleanup_old_results,
     count_cleanup_candidates,
+    delete_candidates,
 )
 from tests.factories import (
+    ORG_ID,
+    OTHER_ORG_ID,
+    SITE_ID,
     create_case,
     create_run,
     create_suite,
@@ -320,3 +330,128 @@ def test_cli_script_uses_frozen_time_and_deletes(session, database_url):
         )
         is not None
     )
+
+
+
+def test_delete_recheck_skips_run_pinned_after_candidate_select(session):
+    """The original race: SELECT candidates, then insert a baseline, then DELETE."""
+
+    suite = create_suite(session)
+    case = create_case(session, suite)
+    run, result = _add_run_with_result(
+        session,
+        suite,
+        case,
+        start_days_ago=220,
+        finish_days_ago=219,
+    )
+    session.commit()
+
+    candidate_ids = session.scalars(
+        select(EvalResult.id)
+        .join(EvalRun, EvalResult.run_id == EvalRun.id)
+        .where(*_policy_filter(CUTOFF))
+    ).all()
+    assert candidate_ids == [result.id]
+
+    # Simulate another writer pinning the run after the candidate SELECT.
+    session.add(make_baseline(suite, run))
+    session.commit()
+
+    deleted = delete_candidates(session, list(candidate_ids), CUTOFF)
+    session.commit()
+
+    assert deleted == 0
+    assert session.get(EvalResult, result.id) is not None
+
+
+def test_baseline_lock_is_exclusive_across_transactions(engine):
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    first = session_factory()
+    second = session_factory()
+    try:
+        acquire_baseline_lock(first)
+
+        acquired = second.scalar(
+            select(func.pg_try_advisory_xact_lock(BASELINE_LOCK_KEY))
+        )
+        assert acquired is False
+
+        first.commit()
+
+        acquired = second.scalar(
+            select(func.pg_try_advisory_xact_lock(BASELINE_LOCK_KEY))
+        )
+        assert acquired is True
+    finally:
+        first.rollback()
+        first.close()
+        second.rollback()
+        second.close()
+
+
+def test_set_baseline_rejects_run_without_results(session):
+    suite = create_suite(session)
+    run = create_run(session, suite)
+
+    with pytest.raises(BaselineError, match="no live results"):
+        set_baseline(
+            session,
+            org_id=suite.org_id,
+            site_id=suite.site_id,
+            suite_id=suite.id,
+            run_id=run.id,
+        )
+    session.rollback()
+
+
+def test_set_baseline_rejects_cross_tenant_run(session):
+    suite = create_suite(session)
+    case = create_case(session, suite)
+    run, _result = _add_run_with_result(
+        session,
+        suite,
+        case,
+        start_days_ago=220,
+        finish_days_ago=219,
+    )
+    session.commit()
+
+    with pytest.raises(BaselineError, match="tenant/suite"):
+        set_baseline(
+            session,
+            org_id=OTHER_ORG_ID,
+            site_id=SITE_ID,
+            suite_id=suite.id,
+            run_id=run.id,
+        )
+    session.rollback()
+
+
+def test_set_baseline_protects_results_from_cleanup(session):
+    suite = create_suite(session)
+    case = create_case(session, suite)
+    run, result = _add_run_with_result(
+        session,
+        suite,
+        case,
+        start_days_ago=400,
+        finish_days_ago=399,
+    )
+    session.commit()
+
+    set_baseline(
+        session,
+        org_id=ORG_ID,
+        site_id=SITE_ID,
+        suite_id=suite.id,
+        run_id=run.id,
+        note="虚构基线：并发协议测试",
+    )
+    session.commit()
+
+    report = cleanup_old_results(session, now=NOW)
+    session.commit()
+
+    assert report.deleted == 0
+    assert session.get(EvalResult, result.id) is not None

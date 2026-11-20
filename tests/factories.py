@@ -200,6 +200,7 @@ def result_payload(**overrides) -> dict:
         "site_id": SITE_ID,
         "run_id": ORG_ID,
         "case_id": SITE_ID,
+        "suite_id": ORG_ID,
         "score": "95.000",
         "passed": True,
         "point_hits": [],
